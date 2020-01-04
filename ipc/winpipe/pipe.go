@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.zx2c4.com/wireguard/windows/elevate"
 )
 
 //sys connectNamedPipe(pipe windows.Handle, o *windows.Overlapped) (err error) = ConnectNamedPipe
@@ -456,7 +457,10 @@ func ListenPipe(path string, c *PipeConfig) (net.Listener, error) {
 		closeCh:     make(chan int),
 		doneCh:      make(chan int),
 	}
-	go l.listenerRoutine()
+	go elevate.DoAsSystem(func() error {
+		l.listenerRoutine()
+		return nil
+	})
 	return l, nil
 }
 

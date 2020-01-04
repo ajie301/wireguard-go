@@ -15,6 +15,13 @@ import (
 	"golang.zx2c4.com/wireguard/ipc"
 
 	"golang.zx2c4.com/wireguard/tun"
+
+	"strings"
+	"bufio"
+
+	"golang.zx2c4.com/wireguard/windows/elevate"
+	"golang.zx2c4.com/wireguard/windows/tunnel"
+	"golang.zx2c4.com/wireguard/windows/conf"
 )
 
 const (
@@ -22,13 +29,21 @@ const (
 	ExitSetupFailed  = 1
 )
 
-func main() {
-	if len(os.Args) != 2 {
-		os.Exit(ExitSetupFailed)
-	}
-	interfaceName := os.Args[1]
+const testInput = `
+[Interface]
+PrivateKey = iC7PijUwVv417WdPC3qvIE8vJ4sE88cqyOya+3P5SU0=
+Address = 10.253.0.4/32
+DNS = 1.1.1.1, 8.8.8.8
 
-	fmt.Fprintln(os.Stderr, "Warning: this is a test program for Windows, mainly used for debugging this Go package. For a real WireGuard for Windows client, the repo you want is <https://git.zx2c4.com/wireguard-windows/>, which includes this code as a module.")
+[Peer]
+PublicKey = 3Qps8Q72H1pemY3moErXVkQDUmPZ1qLoWpFHLbgJcFE=
+AllowedIPs = 0.0.0.0/0
+Endpoint = 42.159.91.157:51820
+PersistentKeepalive = 10`
+
+func TestRuntWireguard() error {
+
+	interfaceName := "wg_test"
 
 	logger := device.NewLogger(
 		device.LogLevelDebug,
@@ -37,9 +52,17 @@ func main() {
 	logger.Info.Println("Starting wireguard-go version", device.WireGuardGoVersion)
 	logger.Debug.Println("Debug log enabled")
 
-	tun, err := tun.CreateTUN(interfaceName, 0)
+	// create watcher
+	watcher := tunnel.NewWatcher()
+	if watcher == nil {
+		logger.Error.Println("Failed to create watcher")
+		os.Exit(ExitSetupFailed)
+	}
+	logger.Info.Println("watcher created")
+
+	wintun, err := tun.CreateTUN(interfaceName, 0)
 	if err == nil {
-		realInterfaceName, err2 := tun.Name()
+		realInterfaceName, err2 := wintun.Name()
 		if err2 == nil {
 			interfaceName = realInterfaceName
 		}
@@ -48,7 +71,7 @@ func main() {
 		os.Exit(ExitSetupFailed)
 	}
 
-	device := device.NewDevice(tun, logger)
+	device := device.NewDevice(wintun, logger)
 	device.Up()
 	logger.Info.Println("Device started")
 
@@ -57,6 +80,22 @@ func main() {
 		logger.Error.Println("Failed to listen on uapi socket:", err)
 		os.Exit(ExitSetupFailed)
 	}
+
+	// set config
+	conf, err := conf.FromWgQuick(testInput, "test")
+	uapiConf, err := conf.ToUAPI()
+	if err != nil {
+		logger.Error.Println("Failed to read uapi config :", err)
+		os.Exit(ExitSetupFailed)
+	}
+
+	logger.Info.Println("set config info")
+	device.IpcSetOperation(bufio.NewReader(strings.NewReader(uapiConf)))
+	device.Up()
+
+	logger.Info.Println("configure watcher, watcher run")
+	nativeTun := wintun.(*tun.NativeTun)
+	watcher.Run(device, conf, nativeTun)
 
 	errs := make(chan error)
 	term := make(chan os.Signal, 1)
@@ -91,4 +130,11 @@ func main() {
 	device.Close()
 
 	logger.Info.Println("Shutting down")
+	return nil
+}
+
+func main(){
+	err := elevate.DoAsSystem(TestRuntWireguard)
+	fmt.Println(err)
+	return
 }
