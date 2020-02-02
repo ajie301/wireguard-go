@@ -31,7 +31,8 @@ public_key=dd0a6cf10ef61f5a5e998de6a04ad75644035263d9d6a2e85a91472db8097051
 endpoint=42.159.91.157:51820
 persistent_keepalive_interval=10
 replace_allowed_ips=true
-allowed_ip=0.0.0.0/0`
+allowed_ip=192.168.2.0/24`
+const allowedIP = `192.168.2.0/24`  //此ip必须与testInput中相同
 
 var dict map[string]string //保存原dns
 
@@ -204,17 +205,23 @@ func main() {
 	strCmd = fmt.Sprintf("ifconfig %s inet %s/32 %s alias",
 		interfaceName, addressIp, addressIp)
 	execCmd(strCmd)
-
 	strCmd = fmt.Sprintf("ifconfig %s up", interfaceName)
 	execCmd(strCmd)
 
-	strCmd = fmt.Sprintf("route -q -n add -inet 0.0.0.0/1 -interface %s",
-		interfaceName)
-	execCmd(strCmd)
-
-	strCmd = fmt.Sprintf("route -q -n add -inet 128.0.0.0/1 -interface %s",
-		interfaceName)
-	execCmd(strCmd)
+	//设置路由表
+	if strings.HasSuffix(allowedIP, "/0"){
+        strCmd = fmt.Sprintf("route -q -n add -inet 0.0.0.0/1 -interface %s",
+                             interfaceName)
+        execCmd(strCmd)
+   
+        strCmd = fmt.Sprintf("route -q -n add -inet 128.0.0.0/1 -interface %s",
+                             interfaceName)
+        execCmd(strCmd)
+    }else{
+        strCmd = fmt.Sprintf("route -q -n add -inet %s -interface %s",
+                             allowedIP, interfaceName)
+        execCmd(strCmd)
+	}
 	serverIp := "42.159.91.157"
 	gateway := getGateway()
 	logger.Info.Println(gateway)
