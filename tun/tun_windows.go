@@ -42,7 +42,7 @@ type NativeTun struct {
 	rings     *wintun.RingDescriptor
 }
 
-const WintunPool = wintun.Pool("WireGuard")
+const WintunPool = wintun.Pool("DeepCloud")
 
 //go:linkname procyield runtime.procyield
 func procyield(cycles uint32)
