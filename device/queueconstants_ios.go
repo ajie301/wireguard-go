@@ -14,5 +14,6 @@ const (
 	QueueInboundSize           = 1024
 	QueueHandshakeSize         = 1024
 	MaxSegmentSize             = 1700
-	PreallocatedBuffersPerPool = 1024
+	// spalib会额外占用一些内存，导致按原来的长度申请缓冲会超过ios Extension的内存限制，由1024调整为512
+	PreallocatedBuffersPerPool = 512
 )
