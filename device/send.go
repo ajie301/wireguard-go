@@ -16,6 +16,9 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+
+	"golang.zx2c4.com/wireguard/config"
+	"golang.zx2c4.com/wireguard/utils"
 )
 
 /* Outbound flow
@@ -151,9 +154,21 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		return err
 	}
 
-	var buff [MessageInitiationSize]byte
-	writer := bytes.NewBuffer(buff[:0])
-	binary.Write(writer, binary.LittleEndian, msg)
+	var writer *bytes.Buffer
+	switch config.Protocol() {
+	case config.PROTO_WIREGUARD:
+		fallthrough
+	default:
+		var buff [MessageInitiationSize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, msg)
+	case config.PROTO_DEEPTUN_V1:
+		v1Msg := peer.device.DeepTunV1MessageInitiation(msg)
+		var buff [MessageInitiationSize + MessageHeaderRandomSize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, v1Msg)
+	}
+
 	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
 
@@ -182,9 +197,21 @@ func (peer *Peer) SendHandshakeResponse() error {
 		return err
 	}
 
-	var buff [MessageResponseSize]byte
-	writer := bytes.NewBuffer(buff[:0])
-	binary.Write(writer, binary.LittleEndian, response)
+	var writer *bytes.Buffer
+	switch config.Protocol() {
+	case config.PROTO_WIREGUARD:
+		fallthrough
+	default:
+		var buff [MessageResponseSize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, response)
+	case config.PROTO_DEEPTUN_V1:
+		v1Msg := peer.device.DeepTunV1MessageResponse(response)
+		var buff [MessageResponseSize + MessageHeaderRandomSize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, v1Msg)
+	}
+
 	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
 
@@ -216,9 +243,21 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 		return err
 	}
 
-	var buff [MessageCookieReplySize]byte
-	writer := bytes.NewBuffer(buff[:0])
-	binary.Write(writer, binary.LittleEndian, reply)
+	var writer *bytes.Buffer
+	switch config.Protocol() {
+	case config.PROTO_WIREGUARD:
+		fallthrough
+	default:
+		var buff [MessageCookieReplySize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, reply)
+	case config.PROTO_DEEPTUN_V1:
+		v1Msg := device.DeepTunV1MessageCookieReply(reply)
+		var buff [MessageCookieReplySize + MessageHeaderRandomSize]byte
+		writer = bytes.NewBuffer(buff[:0])
+		binary.Write(writer, binary.LittleEndian, v1Msg)
+	}
+
 	device.net.bind.Send(writer.Bytes(), initiatingElem.endpoint)
 	return nil
 }
@@ -264,6 +303,10 @@ func (device *Device) RoutineReadFromTUN() {
 		// read packet
 
 		offset := MessageTransportHeaderSize
+		switch config.Protocol() {
+		case config.PROTO_DEEPTUN_V1:
+			offset = MessageTransportHeaderSize + MessageHeaderRandomSize
+		}
 		size, err := device.tun.device.Read(elem.buffer[:], offset)
 
 		if err != nil {
@@ -276,8 +319,17 @@ func (device *Device) RoutineReadFromTUN() {
 			return
 		}
 
-		if size == 0 || size > MaxContentSize {
-			continue
+		switch config.Protocol() {
+		case config.PROTO_WIREGUARD:
+			fallthrough
+		default:
+			if size == 0 || size > MaxContentSize {
+				continue
+			}
+		case config.PROTO_DEEPTUN_V1:
+			if size == 0 || size > MaxContentSize-MessageHeaderRandomSize {
+				continue
+			}
 		}
 
 		elem.packet = elem.buffer[offset : offset+size]
@@ -502,15 +554,35 @@ func (device *Device) RoutineEncryption() {
 
 			// populate header fields
 
-			header := elem.buffer[:MessageTransportHeaderSize]
+			var header []byte
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				header = elem.buffer[:MessageTransportHeaderSize]
 
-			fieldType := header[0:4]
-			fieldReceiver := header[4:8]
-			fieldNonce := header[8:16]
+				fieldType := header[0:4]
+				fieldReceiver := header[4:8]
+				fieldNonce := header[8:16]
 
-			binary.LittleEndian.PutUint32(fieldType, MessageTransportType)
-			binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
-			binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
+				binary.LittleEndian.PutUint32(fieldType, MessageTransportType)
+				binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
+				binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
+			case config.PROTO_DEEPTUN_V1:
+				header = elem.buffer[:MessageTransportHeaderSize+MessageHeaderRandomSize]
+
+				randomField := header[0:4]
+				fieldType := header[4:8]
+				fieldReceiver := header[8:12]
+				fieldNonce := header[12:20]
+
+				randomValue, mixType := utils.MixType(uint32(MessageTransportType))
+
+				binary.LittleEndian.PutUint32(randomField, randomValue)
+				binary.LittleEndian.PutUint32(fieldType, mixType)
+				binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
+				binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
+			}
 
 			// pad content to multiple of 16
 

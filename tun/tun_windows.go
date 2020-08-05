@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"golang.zx2c4.com/wireguard/config"
 	"golang.zx2c4.com/wireguard/tun/wintun"
 )
 
@@ -50,6 +51,42 @@ func procyield(cycles uint32)
 //go:linkname nanotime runtime.nanotime
 func nanotime() int64
 
+// 仅创建网卡并安装驱动
+func CreateInterface(ifname string) error {
+	var err error
+	var wt *wintun.Interface
+
+	// Does an interface with this name already exist?
+	wt, err = WintunPool.GetInterface(ifname)
+	if err == nil {
+		// If so, we delete it, in case it has weird residual configuration.
+		_, err = wt.DeleteInterface()
+		if err != nil {
+			return err
+		}
+	}
+	_, _, err = WintunPool.CreateInterface(ifname, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// 删除网卡设备
+func DeleteInterface(ifname string) error {
+	var err error
+	var wt *wintun.Interface
+
+	wt, err = WintunPool.GetInterface(ifname)
+	if err == nil {
+		_, err = wt.DeleteInterface()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 //
 // CreateTUN creates a Wintun interface with the given name. Should a Wintun
 // interface with the same name exist, it is reused.
@@ -68,16 +105,23 @@ func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu 
 
 	// Does an interface with this name already exist?
 	wt, err = WintunPool.GetInterface(ifname)
-	if err == nil {
-		// If so, we delete it, in case it has weird residual configuration.
-		_, err = wt.DeleteInterface()
-		if err != nil {
-			return nil, fmt.Errorf("Error deleting already existing interface: %v", err)
+
+	if config.NetInf() {
+		if err == nil {
+			// If so, we delete it, in case it has weird residual configuration.
+			_, err = wt.DeleteInterface()
+			if err != nil {
+				return nil, fmt.Errorf("Error deleting already existing interface: %v", err)
+			}
 		}
-	}
-	wt, _, err = WintunPool.CreateInterface(ifname, requestedGUID)
-	if err != nil {
-		return nil, fmt.Errorf("Error creating interface: %v", err)
+		wt, _, err = WintunPool.CreateInterface(ifname, requestedGUID)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating interface: %v", err)
+		}
+	} else {
+		if err != nil {
+			return nil, fmt.Errorf("Error getting interface: %v", err)
+		}
 	}
 
 	forcedMTU := 1420
