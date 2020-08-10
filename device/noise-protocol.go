@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/poly1305"
 	"golang.zx2c4.com/wireguard/tai64n"
+	"golang.zx2c4.com/wireguard/utils"
 )
 
 const (
@@ -46,6 +47,7 @@ const (
 	MessageTransportSize       = MessageTransportHeaderSize + poly1305.TagSize // size of empty transport
 	MessageKeepaliveSize       = MessageTransportSize                          // size of keepalive
 	MessageHandshakeSize       = MessageInitiationSize                         // size of largest handshake related message
+	MessageHeaderRandomSize    = 4                                             // size of random field
 )
 
 const (
@@ -92,6 +94,30 @@ type MessageCookieReply struct {
 	Receiver uint32
 	Nonce    [chacha20poly1305.NonceSizeX]byte
 	Cookie   [blake2s.Size128 + poly1305.TagSize]byte
+}
+
+/*
+ * deeptun v1 protocol
+ */
+
+type MessageInitiationDeepTunV1 struct {
+	Random uint32
+	MessageInitiation
+}
+
+type MessageResponseDeepTunV1 struct {
+	Random uint32
+	MessageResponse
+}
+
+type MessageTransportDeepTunV1 struct {
+	Random uint32
+	MessageTransport
+}
+
+type MessageCookieReplyDeepTunV1 struct {
+	Random uint32
+	MessageCookieReply
 }
 
 type Handshake struct {
@@ -603,4 +629,41 @@ func (peer *Peer) ReceivedWithKeypair(receivedKeypair *Keypair) bool {
 	keypairs.current = keypairs.next
 	keypairs.next = nil
 	return true
+}
+
+// 根据原生协议的包生成deeptun混淆包
+func (device *Device) DeepTunV1MessageInitiation(msg *MessageInitiation) *MessageInitiationDeepTunV1 {
+	m, r := utils.MixType(msg.Type)
+	msg.Type = m
+	return &MessageInitiationDeepTunV1{
+		Random:            r,
+		MessageInitiation: *msg,
+	}
+}
+
+func (device *Device) DeepTunV1MessageResponse(msg *MessageResponse) *MessageResponseDeepTunV1 {
+	m, r := utils.MixType(msg.Type)
+	msg.Type = m
+	return &MessageResponseDeepTunV1{
+		Random:          r,
+		MessageResponse: *msg,
+	}
+}
+
+func (device *Device) DeepTunV1MessageTransport(msg *MessageTransport) *MessageTransportDeepTunV1 {
+	m, r := utils.MixType(msg.Type)
+	msg.Type = m
+	return &MessageTransportDeepTunV1{
+		Random:           r,
+		MessageTransport: *msg,
+	}
+}
+
+func (device *Device) DeepTunV1MessageCookieReply(msg *MessageCookieReply) *MessageCookieReplyDeepTunV1 {
+	m, r := utils.MixType(msg.Type)
+	msg.Type = m
+	return &MessageCookieReplyDeepTunV1{
+		Random:             r,
+		MessageCookieReply: *msg,
+	}
 }

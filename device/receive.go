@@ -17,6 +17,8 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+	"golang.zx2c4.com/wireguard/config"
+	"golang.zx2c4.com/wireguard/utils"
 )
 
 type QueueHandshakeElement struct {
@@ -129,14 +131,30 @@ func (device *Device) RoutineReceiveIncoming(IP int, bind Bind) {
 			return
 		}
 
-		if size < MinMessageSize {
+		minSize := MinMessageSize
+		switch config.Protocol() {
+		case config.PROTO_DEEPTUN_V1:
+			minSize = MinMessageSize + MessageHeaderRandomSize
+		}
+		if size < minSize {
 			continue
 		}
 
 		// check size of packet
 
 		packet := buffer[:size]
-		msgType := binary.LittleEndian.Uint32(packet[:4])
+
+		var msgType uint32
+		switch config.Protocol() {
+		case config.PROTO_WIREGUARD:
+			fallthrough
+		default:
+			msgType = binary.LittleEndian.Uint32(packet[:4])
+		case config.PROTO_DEEPTUN_V1:
+			randomValue := binary.LittleEndian.Uint32(packet[:4])
+			mixType := binary.LittleEndian.Uint32(packet[4:8])
+			msgType = utils.DivideType(mixType, randomValue)
+		}
 
 		var okay bool
 
@@ -147,16 +165,29 @@ func (device *Device) RoutineReceiveIncoming(IP int, bind Bind) {
 		case MessageTransportType:
 
 			// check size
-
-			if len(packet) < MessageTransportSize {
+			transportSize := MessageTransportSize
+			switch config.Protocol() {
+			case config.PROTO_DEEPTUN_V1:
+				transportSize = MessageTransportSize + MessageHeaderRandomSize
+			}
+			if len(packet) < transportSize {
 				continue
 			}
 
 			// lookup key pair
-
-			receiver := binary.LittleEndian.Uint32(
-				packet[MessageTransportOffsetReceiver:MessageTransportOffsetCounter],
-			)
+			var receiver uint32
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				receiver = binary.LittleEndian.Uint32(
+					packet[MessageTransportOffsetReceiver:MessageTransportOffsetCounter],
+				)
+			case config.PROTO_DEEPTUN_V1:
+				receiver = binary.LittleEndian.Uint32(
+					packet[MessageTransportOffsetReceiver+MessageHeaderRandomSize : MessageTransportOffsetCounter+MessageHeaderRandomSize],
+				)
+			}
 			value := device.indexTable.Lookup(receiver)
 			keypair := value.keypair
 			if keypair == nil {
@@ -194,13 +225,34 @@ func (device *Device) RoutineReceiveIncoming(IP int, bind Bind) {
 		// otherwise it is a fixed size & handshake related packet
 
 		case MessageInitiationType:
-			okay = len(packet) == MessageInitiationSize
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				okay = len(packet) == MessageInitiationSize
+			case config.PROTO_DEEPTUN_V1:
+				okay = len(packet) == MessageInitiationSize+MessageHeaderRandomSize
+			}
 
 		case MessageResponseType:
-			okay = len(packet) == MessageResponseSize
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				okay = len(packet) == MessageResponseSize
+			case config.PROTO_DEEPTUN_V1:
+				okay = len(packet) == MessageResponseSize+MessageHeaderRandomSize
+			}
 
 		case MessageCookieReplyType:
-			okay = len(packet) == MessageCookieReplySize
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				okay = len(packet) == MessageCookieReplySize
+			case config.PROTO_DEEPTUN_V1:
+				okay = len(packet) == MessageCookieReplySize+MessageHeaderRandomSize
+			}
 
 		default:
 			logDebug.Println("Received message with unknown type")
@@ -253,8 +305,18 @@ func (device *Device) RoutineDecryption() {
 
 			// split message into fields
 
-			counter := elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
-			content := elem.packet[MessageTransportOffsetContent:]
+			var counter []byte
+			var content []byte
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				counter = elem.packet[MessageTransportOffsetCounter:MessageTransportOffsetContent]
+				content = elem.packet[MessageTransportOffsetContent:]
+			case config.PROTO_DEEPTUN_V1:
+				counter = elem.packet[MessageTransportOffsetCounter+MessageHeaderRandomSize : MessageTransportOffsetContent+MessageHeaderRandomSize]
+				content = elem.packet[MessageTransportOffsetContent+MessageHeaderRandomSize:]
+			}
 
 			// expand nonce
 
@@ -335,10 +397,25 @@ func (device *Device) RoutineHandshake() {
 
 			var reply MessageCookieReply
 			reader := bytes.NewReader(elem.packet)
-			err := binary.Read(reader, binary.LittleEndian, &reply)
-			if err != nil {
-				logDebug.Println("Failed to decode cookie reply")
-				return
+
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				err := binary.Read(reader, binary.LittleEndian, &reply)
+				if err != nil {
+					logDebug.Println("Failed to decode cookie reply")
+					return
+				}
+			case config.PROTO_DEEPTUN_V1:
+				var v1Reply MessageCookieReplyDeepTunV1
+				err := binary.Read(reader, binary.LittleEndian, &v1Reply)
+				if err != nil {
+					logDebug.Println("Failed to decode cookie reply")
+					return
+				}
+				v1Reply.Type = utils.DivideType(v1Reply.Type, v1Reply.Random)
+				reply = v1Reply.MessageCookieReply
 			}
 
 			// lookup peer from index
@@ -401,10 +478,25 @@ func (device *Device) RoutineHandshake() {
 
 			var msg MessageInitiation
 			reader := bytes.NewReader(elem.packet)
-			err := binary.Read(reader, binary.LittleEndian, &msg)
-			if err != nil {
-				logError.Println("Failed to decode initiation message")
-				continue
+
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				err := binary.Read(reader, binary.LittleEndian, &msg)
+				if err != nil {
+					logError.Println("Failed to decode initiation message")
+					continue
+				}
+			case config.PROTO_DEEPTUN_V1:
+				var v1Msg MessageInitiationDeepTunV1
+				err := binary.Read(reader, binary.LittleEndian, &v1Msg)
+				if err != nil {
+					logDebug.Println("Failed to decode initiation message")
+					return
+				}
+				v1Msg.Type = utils.DivideType(v1Msg.Type, v1Msg.Random)
+				msg = v1Msg.MessageInitiation
 			}
 
 			// consume initiation
@@ -437,10 +529,25 @@ func (device *Device) RoutineHandshake() {
 
 			var msg MessageResponse
 			reader := bytes.NewReader(elem.packet)
-			err := binary.Read(reader, binary.LittleEndian, &msg)
-			if err != nil {
-				logError.Println("Failed to decode response message")
-				continue
+
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				err := binary.Read(reader, binary.LittleEndian, &msg)
+				if err != nil {
+					logError.Println("Failed to decode response message")
+					continue
+				}
+			case config.PROTO_DEEPTUN_V1:
+				var v1Msg MessageResponseDeepTunV1
+				err := binary.Read(reader, binary.LittleEndian, &v1Msg)
+				if err != nil {
+					logDebug.Println("Failed to decode response message")
+					return
+				}
+				v1Msg.Type = utils.DivideType(v1Msg.Type, v1Msg.Random)
+				msg = v1Msg.MessageResponse
 			}
 
 			// consume response
@@ -467,7 +574,7 @@ func (device *Device) RoutineHandshake() {
 
 			// derive keypair
 
-			err = peer.BeginSymmetricSession()
+			err := peer.BeginSymmetricSession()
 
 			if err != nil {
 				logError.Println(peer, "- Failed to derive keypair:", err)
@@ -557,7 +664,15 @@ func (peer *Peer) RoutineSequentialReceiver() {
 		peer.keepKeyFreshReceiving()
 		peer.timersAnyAuthenticatedPacketTraversal()
 		peer.timersAnyAuthenticatedPacketReceived()
-		atomic.AddUint64(&peer.stats.rxBytes, uint64(len(elem.packet)+MinMessageSize))
+
+		switch config.Protocol() {
+		case config.PROTO_WIREGUARD:
+			fallthrough
+		default:
+			atomic.AddUint64(&peer.stats.rxBytes, uint64(len(elem.packet)+MinMessageSize))
+		case config.PROTO_DEEPTUN_V1:
+			atomic.AddUint64(&peer.stats.rxBytes, uint64(len(elem.packet)+MinMessageSize+MessageHeaderRandomSize))
+		}
 
 		// check for keepalive
 
