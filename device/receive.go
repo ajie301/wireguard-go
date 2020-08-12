@@ -748,6 +748,10 @@ func (peer *Peer) RoutineSequentialReceiver() {
 		// write to tun device
 
 		offset := MessageTransportOffsetContent
+		switch config.Protocol() {
+		case config.PROTO_DEEPTUN_V1:
+			offset += MessageHeaderRandomSize
+		}
 		_, err := device.tun.device.Write(elem.buffer[:offset+len(elem.packet)], offset)
 		if len(peer.queue.inbound) == 0 {
 			err = device.tun.device.Flush()

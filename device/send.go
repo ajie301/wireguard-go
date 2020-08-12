@@ -670,8 +670,18 @@ func (peer *Peer) RoutineSequentialSender() {
 			// send message and return buffer to pool
 
 			err := peer.SendBuffer(elem.packet)
-			if len(elem.packet) != MessageKeepaliveSize {
-				peer.timersDataSent()
+
+			switch config.Protocol() {
+			case config.PROTO_WIREGUARD:
+				fallthrough
+			default:
+				if len(elem.packet) != MessageKeepaliveSize {
+					peer.timersDataSent()
+				}
+			case config.PROTO_DEEPTUN_V1:
+				if len(elem.packet) != MessageKeepaliveSize+MessageHeaderRandomSize {
+					peer.timersDataSent()
+				}
 			}
 			device.PutMessageBuffer(elem.buffer)
 			device.PutOutboundElement(elem)

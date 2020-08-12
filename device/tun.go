@@ -8,6 +8,7 @@ package device
 import (
 	"sync/atomic"
 
+	"golang.zx2c4.com/wireguard/config"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -29,7 +30,12 @@ func (device *Device) RoutineTUNEventReader() {
 			if err != nil {
 				logError.Println("Failed to load updated MTU of device:", err)
 			} else if int(old) != mtu {
-				if mtu+MessageTransportSize > MaxMessageSize {
+				transportSize := MessageTransportSize
+				switch config.Protocol() {
+				case config.PROTO_DEEPTUN_V1:
+					transportSize += MessageHeaderRandomSize
+				}
+				if mtu+transportSize > MaxMessageSize {
 					logInfo.Println("MTU updated:", mtu, "(too large)")
 				} else {
 					logInfo.Println("MTU updated:", mtu)
