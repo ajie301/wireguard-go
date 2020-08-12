@@ -201,3 +201,9 @@ func UAPIOpen(name string) (*os.File, error) {
 
 	return listener.File()
 }
+
+//socketDirectory默认系统目录
+//android等系统需要修改为软件目录，否则需要root权限才能操作
+func SetSocketDirectory(dir string) {
+	socketDirectory = dir
+}
