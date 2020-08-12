@@ -107,6 +107,7 @@ func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu 
 	wt, err = WintunPool.GetInterface(ifname)
 
 	if config.NetInf() {
+		// 当前执行流中创建网卡
 		if err == nil {
 			// If so, we delete it, in case it has weird residual configuration.
 			_, err = wt.DeleteInterface()
@@ -119,8 +120,18 @@ func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu 
 			return nil, fmt.Errorf("Error creating interface: %v", err)
 		}
 	} else {
-		if err != nil {
-			return nil, fmt.Errorf("Error getting interface: %v", err)
+		// 等待网卡创建成功，超时时间30s
+		waitSeconds := 0
+		for {
+			if err == nil {
+				break
+			}
+			if waitSeconds >= 30 {
+				return nil, fmt.Errorf("Error getting interface: %v", err)
+			}
+			waitSeconds += 1
+			time.Sleep(time.Second * 1)
+			wt, err = WintunPool.GetInterface(ifname)
 		}
 	}
 
