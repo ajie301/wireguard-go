@@ -99,6 +99,9 @@ func removeNumberedSuffix(ifname string) string {
 // the interface is found but not a Wintun-class or a member of the pool,
 // this function returns windows.ERROR_ALREADY_EXISTS.
 func (pool Pool) GetInterface(ifname string) (*Interface, error) {
+	if !strings.Contains(ifname, " Tunnel Adapter") {
+		ifname = ifname + " Tunnel Adapter"
+	}
 	mutex, err := pool.takeNameMutex()
 	if err != nil {
 		return nil, err
@@ -635,6 +638,9 @@ func (wintun *Interface) Name() (string, error) {
 
 // SetName sets name of the Wintun interface.
 func (wintun *Interface) SetName(ifname string) error {
+	if !strings.Contains(ifname, " Tunnel Adapter") {
+		ifname = ifname + " Tunnel Adapter"
+	}
 	const maxSuffix = 1000
 	availableIfname := ifname
 	for i := 0; ; i++ {

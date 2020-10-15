@@ -43,7 +43,7 @@ type NativeTun struct {
 	rings     *wintun.RingDescriptor
 }
 
-const WintunPool = wintun.Pool("DeepCloud")
+var WintunPool = wintun.Pool("DeepCloud")
 
 //go:linkname procyield runtime.procyield
 func procyield(cycles uint32)
@@ -51,10 +51,20 @@ func procyield(cycles uint32)
 //go:linkname nanotime runtime.nanotime
 func nanotime() int64
 
+// 尝试重新定义WintunPool对象，为了兼容不定制网卡名称之前的版本
+// ifname: 定制的网卡名称
+func tryRedefWintunPool(ifname string){
+	if ifname != "DeepCloud Tunnel Adapter" && string(WintunPool) != ifname {
+		WintunPool = wintun.Pool(ifname)
+	}
+}
+
 // 仅创建网卡并安装驱动
 func CreateInterface(ifname string) error {
 	var err error
 	var wt *wintun.Interface
+
+	tryRedefWintunPool(ifname)
 
 	// Does an interface with this name already exist?
 	wt, err = WintunPool.GetInterface(ifname)
@@ -76,6 +86,8 @@ func CreateInterface(ifname string) error {
 func DeleteInterface(ifname string) error {
 	var err error
 	var wt *wintun.Interface
+
+	tryRedefWintunPool(ifname)
 
 	wt, err = WintunPool.GetInterface(ifname)
 	if err == nil {
@@ -102,6 +114,8 @@ func CreateTUN(ifname string, mtu int) (Device, error) {
 func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu int) (Device, error) {
 	var err error
 	var wt *wintun.Interface
+
+	tryRedefWintunPool(ifname)
 
 	// Does an interface with this name already exist?
 	wt, err = WintunPool.GetInterface(ifname)
